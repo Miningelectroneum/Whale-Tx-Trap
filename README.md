@@ -9,7 +9,7 @@
 
 **Real-time monitoring and alerting system for large cryptocurrency transfers on the blockchain**
 
-[Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Documentation](#-documentation) • [Contributing](#-contributing)
+[Features](#-features) • [Installation](#-installation) • [Code Structure](#-complete-code-structure) • [Documentation](#-documentation) • [Contributing](#-contributing)
 
 </div>
 
@@ -21,6 +21,7 @@
 - [Features](#-features)
 - [Architecture](#%EF%B8%8F-architecture)
 - [Deployed Contracts](#-deployed-contracts)
+- [Complete Code Structure](#-complete-code-structure)
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
 - [Configuration](#%EF%B8%8F-configuration)
@@ -152,15 +153,17 @@ graph TD
 
 ---
 
-## 📁 Project Structure
+## 📂 Complete Code Structure
+
+### Project Tree
 
 ```
 whale-transaction-trap/
 │
 ├── 📂 src/
-│   ├── 📄 WhaleTransferTrap.sol          # Main trap logic & threshold checking
+│   ├── 📄 IWhaleTransferResponse.sol     # Interface definition
 │   ├── 📄 WhaleTransferResponse.sol      # Alert storage & event emission
-│   └── 📄 IWhaleTransferResponse.sol     # Interface definition
+│   └── 📄 WhaleTransferTrap.sol          # Main trap logic & threshold
 │
 ├── 📂 script/
 │   └── 📄 Deploy.s.sol                   # Foundry deployment script
@@ -170,9 +173,563 @@ whale-transaction-trap/
 │
 ├── 📄 drosera.toml                       # Drosera trap configuration
 ├── 📄 foundry.toml                       # Foundry project config
-├── 📄 .env.example                       # Environment variables template
+├── 📄 .env.example                       # Environment template
 ├── 📄 .gitignore                         # Git ignore rules
+├── 📄 LICENSE                            # MIT License
 └── 📄 README.md                          # This file
+```
+
+---
+
+## 📝 Complete Source Code
+
+### 1️⃣ `src/IWhaleTransferResponse.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/**
+ * @title IWhaleTransferResponse
+ * @notice Interface for the Whale Transfer Response contract
+ * @dev Defines the function signature for recording whale transaction alerts
+ */
+interface IWhaleTransferResponse {
+    /**
+     * @notice Record a whale transfer alert
+     * @param from The address sending the tokens
+     * @param to The address receiving the tokens
+     * @param amount The amount of tokens transferred
+     * @param blockNumber The block number when the transfer occurred
+     */
+    function recordAlert(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 blockNumber
+    ) external;
+}
+```
+
+---
+
+### 2️⃣ `src/WhaleTransferResponse.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {IWhaleTransferResponse} from "./IWhaleTransferResponse.sol";
+
+/**
+ * @title WhaleTransferResponse
+ * @notice Stores and manages whale transfer alerts on-chain
+ * @dev Records alerts when large transfers are detected by the trap
+ */
+contract WhaleTransferResponse is IWhaleTransferResponse {
+    
+    /// @notice Emitted when a new whale transfer alert is recorded
+    event AlertRecorded(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 blockNumber,
+        uint256 timestamp
+    );
+
+    /// @notice Structure to store alert data
+    struct Alert {
+        address from;        // Sender address
+        address to;          // Receiver address
+        uint256 amount;      // Transfer amount
+        uint256 blockNumber; // Block when detected
+        uint256 timestamp;   // Unix timestamp
+    }
+
+    /// @notice Array storing all alerts
+    Alert[] public alerts;
+    
+    /// @notice Mapping to count alerts per address
+    mapping(address => uint256) public alertCountByAddress;
+
+    /// @notice The trap config contract authorized to record alerts
+    address public immutable TRAP_CONFIG;
+
+    /**
+     * @notice Constructor sets the authorized trap config
+     * @param _trapConfig Address of the trap configuration contract
+     */
+    constructor(address _trapConfig) {
+        require(_trapConfig != address(0), "Invalid trap config");
+        TRAP_CONFIG = _trapConfig;
+    }
+
+    /// @notice Restricts function access to trap config only
+    modifier onlyTrapConfig() {
+        require(msg.sender == TRAP_CONFIG, "Only trap config can call");
+        _;
+    }
+
+    /**
+     * @notice Record a new whale transfer alert
+     * @param from Sender address
+     * @param to Receiver address
+     * @param amount Transfer amount
+     * @param blockNumber Block number of detection
+     */
+    function recordAlert(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 blockNumber
+    ) external onlyTrapConfig {
+        alerts.push(Alert({
+            from: from,
+            to: to,
+            amount: amount,
+            blockNumber: blockNumber,
+            timestamp: block.timestamp
+        }));
+
+        alertCountByAddress[from]++;
+        alertCountByAddress[to]++;
+
+        emit AlertRecorded(from, to, amount, blockNumber, block.timestamp);
+    }
+
+    /**
+     * @notice Get the total number of alerts recorded
+     * @return Total alert count
+     */
+    function getAlertCount() external view returns (uint256) {
+        return alerts.length;
+    }
+
+    /**
+     * @notice Get a specific alert by index
+     * @param index The alert index
+     * @return Alert data structure
+     */
+    function getAlert(uint256 index) external view returns (Alert memory) {
+        require(index < alerts.length, "Index out of bounds");
+        return alerts[index];
+    }
+
+    /**
+     * @notice Get the latest N alerts
+     * @param count Number of alerts to retrieve
+     * @return Array of the most recent alerts
+     */
+    function getLatestAlerts(uint256 count) external view returns (Alert[] memory) {
+        uint256 length = alerts.length;
+        uint256 returnCount = count > length ? length : count;
+        Alert[] memory latestAlerts = new Alert[](returnCount);
+        
+        for (uint256 i = 0; i < returnCount; i++) {
+            latestAlerts[i] = alerts[length - returnCount + i];
+        }
+        
+        return latestAlerts;
+    }
+}
+```
+
+---
+
+### 3️⃣ `src/WhaleTransferTrap.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ITrap} from "drosera-contracts/interfaces/ITrap.sol";
+
+/**
+ * @title WhaleTransferTrap
+ * @notice Monitors blockchain for large token transfers (whale movements)
+ * @dev Implements Drosera's ITrap interface to detect transfers exceeding threshold
+ */
+contract WhaleTransferTrap is ITrap {
+    
+    /// @notice Threshold for whale detection: 1000 tokens (with 18 decimals)
+    uint256 public constant WHALE_THRESHOLD = 1000 * 10**18;
+
+    /// @notice Structure to hold transfer data
+    struct TransferData {
+        address from;        // Sender address
+        address to;          // Receiver address
+        uint256 amount;      // Transfer amount
+        uint256 blockNumber; // Block number
+    }
+
+    /**
+     * @notice Collect transfer data from the blockchain
+     * @dev Called by Drosera operators to gather transaction data
+     * @return Encoded transfer data
+     */
+    function collect() external view returns (bytes memory) {
+        // In production, this would parse actual transaction logs
+        // For demonstration, we return a sample data structure
+        TransferData memory data = TransferData({
+            from: address(0),
+            to: address(0),
+            amount: 0,
+            blockNumber: block.number
+        });
+        
+        return abi.encode(data);
+    }
+
+    /**
+     * @notice Determine if a transfer exceeds the whale threshold
+     * @dev Called by Drosera to check if response should be triggered
+     * @param collectedData Array of collected transfer data
+     * @return shouldTrigger True if threshold exceeded
+     * @return responseData Encoded data to pass to response contract
+     */
+    function shouldRespond(bytes[] calldata collectedData) 
+        external 
+        pure 
+        returns (bool shouldTrigger, bytes memory responseData) 
+    {
+        require(collectedData.length > 0, "No data collected");
+        
+        TransferData memory data = abi.decode(collectedData[0], (TransferData));
+        
+        // Check if amount exceeds whale threshold and has valid sender
+        if (data.amount >= WHALE_THRESHOLD && data.from != address(0)) {
+            return (true, abi.encode(data.from, data.to, data.amount, data.blockNumber));
+        }
+        
+        return (false, bytes(""));
+    }
+
+    /**
+     * @notice Get the current whale threshold
+     * @return Threshold value in wei
+     */
+    function getThreshold() external pure returns (uint256) {
+        return WHALE_THRESHOLD;
+    }
+}
+```
+
+---
+
+### 4️⃣ `script/Deploy.s.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Script.sol";
+import "forge-std/console.sol";
+import "../src/WhaleTransferResponse.sol";
+import "../src/WhaleTransferTrap.sol";
+
+/**
+ * @title DeployScript
+ * @notice Deployment script for Whale Transfer Alert system
+ * @dev Uses Foundry's scripting functionality
+ */
+contract DeployScript is Script {
+    function run() external {
+        // Get deployer private key from environment
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        
+        // Start broadcasting transactions
+        vm.startBroadcast(deployerPrivateKey);
+
+        // Deploy Response Contract with placeholder trap config
+        // This address will be replaced when trap config is created
+        address placeholder = 0x0000000000000000000000000000000000000001;
+        WhaleTransferResponse response = new WhaleTransferResponse(placeholder);
+        
+        console.log("===========================================");
+        console.log("WhaleTransferResponse:", address(response));
+        console.log("===========================================");
+
+        // Deploy Trap Contract (no constructor parameters allowed)
+        WhaleTransferTrap trap = new WhaleTransferTrap();
+        
+        console.log("WhaleTransferTrap:", address(trap));
+        console.log("Whale Threshold:", trap.getThreshold());
+        console.log("===========================================");
+
+        // Stop broadcasting
+        vm.stopBroadcast();
+        
+        // Display next steps
+        console.log("");
+        console.log("NEXT STEPS:");
+        console.log("1. Copy Response Contract address to drosera.toml");
+        console.log("2. Run: DROSERA_PRIVATE_KEY=xxx drosera apply");
+    }
+}
+```
+
+---
+
+### 5️⃣ `drosera.toml`
+
+```toml
+# Drosera Trap Configuration File
+# Network: Hoodi Testnet
+
+# RPC endpoints
+ethereum_rpc = "https://ethereum-hoodi-rpc.publicnode.com"
+drosera_rpc = "https://relay.hoodi.drosera.io"
+
+# Network configuration
+eth_chain_id = 560048
+drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
+
+# Trap definitions
+[traps]
+[traps.whaletransfer]
+# Path to compiled trap contract
+path = "out/WhaleTransferTrap.sol/WhaleTransferTrap.json"
+
+# Response contract address (update after deployment)
+response_contract = "0xE5701AE464d94449461D224b1f11D5b55be1EC0f"
+
+# Response function signature
+response_function = "recordAlert(address,address,uint256,uint256)"
+
+# Trap parameters
+cooldown_period_blocks = 33          # Blocks between responses
+min_number_of_operators = 1          # Minimum operators required
+max_number_of_operators = 2          # Maximum operators allowed
+block_sample_size = 10               # Blocks to sample per check
+
+# Access control
+private_trap = true                  # Restrict to whitelisted operators
+whitelist = ["0x929a3B64D53481d8D2332a8778dB4984F5c70bfD"]
+
+# Trap config address (added after first deployment)
+# address = "0xYOUR_TRAP_CONFIG_ADDRESS"
+```
+
+---
+
+### 6️⃣ `foundry.toml`
+
+```toml
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.20"
+
+# Optimizer settings
+optimizer = true
+optimizer_runs = 200
+
+# Remappings for imports
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "drosera-contracts/=lib/drosera-contracts/src/"
+]
+
+# Test settings
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 256
+depth = 15
+
+# RPC endpoints
+[rpc_endpoints]
+hoodi = "https://ethereum-hoodi-rpc.publicnode.com"
+
+# Etherscan configuration (for verification)
+[etherscan]
+hoodi = { key = "${ETHERSCAN_API_KEY}" }
+```
+
+---
+
+### 7️⃣ `.env.example`
+
+```bash
+# Environment Variables Template
+# Copy this file to .env and fill in your values
+
+# RPC URL for Hoodi testnet
+HOODI_RPC_URL=https://ethereum-hoodi-rpc.publicnode.com
+
+# Your wallet private key (without 0x prefix)
+# ⚠️ NEVER commit the actual .env file with real keys!
+PRIVATE_KEY=your_private_key_here_without_0x
+
+# Trap configuration address (filled after first deployment)
+TRAP_CONFIG_ADDRESS=
+
+# Optional: Etherscan API key for contract verification
+ETHERSCAN_API_KEY=
+```
+
+---
+
+### 8️⃣ `.gitignore`
+
+```gitignore
+# Foundry files
+cache/
+out/
+broadcast/
+
+# Environment files - NEVER COMMIT THESE
+.env
+.env.local
+*.key
+*_key
+secrets.json
+
+# Dependencies
+node_modules/
+lib/
+bun.lockb
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Drosera database
+.drosera.db
+
+# Test coverage
+coverage/
+lcov.info
+
+# Temporary files
+*.tmp
+*.temp
+~*
+```
+
+---
+
+### 9️⃣ Docker Configuration Files
+
+#### `~/Drosera-Network/docker-compose.yaml`
+
+```yaml
+version: '3.8'
+
+services:
+  drosera-operator:
+    image: ghcr.io/drosera-network/drosera-operator:latest
+    container_name: drosera-operator
+    
+    # Port mappings
+    ports:
+      - "31313:31313"  # P2P communication
+      - "31314:31314"  # HTTP API
+    
+    # Environment variables
+    environment:
+      # Database configuration
+      - DRO__DB_FILE_PATH=/data/drosera.db
+      
+      # Drosera network settings
+      - DRO__DROSERA_ADDRESS=0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D
+      - DRO__LISTEN_ADDRESS=0.0.0.0
+      - DRO__DISABLE_DNR_CONFIRMATION=true
+      
+      # Ethereum network settings
+      - DRO__ETH__CHAIN_ID=560048
+      - DRO__ETH__RPC_URL=https://ethereum-hoodi-rpc.publicnode.com
+      - DRO__ETH__BACKUP_RPC_URL=https://rpc.hoodi.ethpandaops.io
+      - DRO__ETH__PRIVATE_KEY=${ETH_PRIVATE_KEY}
+      
+      # Network configuration
+      - DRO__NETWORK__P2P_PORT=31313
+      - DRO__NETWORK__EXTERNAL_P2P_ADDRESS=${VPS_IP}
+      - DRO__SERVER__PORT=31314
+      
+      # Logging and error handling
+      - RUST_LOG=info,drosera_operator=debug
+      - DRO__ETH__RPC_TIMEOUT=30s
+      - DRO__ETH__RETRY_COUNT=5
+    
+    # Persistent storage
+    volumes:
+      - drosera_data:/data
+    
+    # Restart policy
+    restart: always
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:31314/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Command to run
+    command: node
+
+# Named volumes
+volumes:
+  drosera_data:
+```
+
+#### `~/Drosera-Network/.env`
+
+```bash
+# Drosera Operator Environment Variables
+# Replace these with your actual values
+
+# Your Ethereum private key (without 0x prefix)
+ETH_PRIVATE_KEY=your_private_key_here
+
+# Your VPS public IP address
+VPS_IP=213.199.48.116
+```
+
+---
+
+### 🔟 `LICENSE`
+
+```
+MIT License
+
+Copyright (c) 2025 Whale Transaction Alert Trap
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ---
@@ -197,13 +754,15 @@ whale-transaction-trap/
 - Git
 - Foundry
 - Docker (for operator)
-- Node.js 18+ (optional)
+- Bun (optional)
 
 </td>
 </tr>
 </table>
 
-### Step 1: Install Foundry
+### Complete Installation Steps
+
+#### Step 1: Install Foundry
 
 ```bash
 curl -L https://foundry.paradigm.xyz | bash
@@ -211,7 +770,7 @@ source ~/.bashrc
 foundryup
 ```
 
-### Step 2: Install Drosera CLI
+#### Step 2: Install Drosera CLI
 
 ```bash
 curl -L https://app.drosera.io/install | bash
@@ -219,48 +778,41 @@ source ~/.bashrc
 droseraup
 ```
 
-### Step 3: Install Bun (JavaScript Runtime)
+#### Step 3: Install Bun
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
 source ~/.bashrc
 ```
 
-### Step 4: Clone Repository
+#### Step 4: Clone Repository
 
 ```bash
 git clone https://github.com/Miningelectroneum/Whale-Tx-Trap.git
 cd Whale-Tx-Trap
 ```
 
-### Step 5: Install Dependencies
+#### Step 5: Install Dependencies
 
 ```bash
 forge install foundry-rs/forge-std --no-commit
-bun install
+bun install  # Optional
 ```
 
-### Step 6: Setup Environment
+#### Step 6: Setup Environment
 
 ```bash
 cp .env.example .env
-nano .env  # Add your private key and RPC URL
+nano .env  # Add your private key
 ```
 
-**`.env` file structure:**
-```env
-HOODI_RPC_URL=https://ethereum-hoodi-rpc.publicnode.com
-PRIVATE_KEY=your_private_key_here_without_0x
-TRAP_CONFIG_ADDRESS=
-```
-
-### Step 7: Build Contracts
+#### Step 7: Build Contracts
 
 ```bash
 forge build
 ```
 
-You should see:
+Expected output:
 ```
 [⠊] Compiling...
 [⠒] Compiling 3 files with Solc 0.8.20
@@ -289,42 +841,45 @@ forge script script/Deploy.s.sol:DeployScript \
 DROSERA_PRIVATE_KEY=$PRIVATE_KEY drosera apply
 ```
 
-**📝 Important**: Save the contract addresses from the deployment output!
+**📝 Save these addresses from deployment:**
+- WhaleTransferResponse: `0xE5701AE464d94449461D224b1f11D5b55be1EC0f`
+- WhaleTransferTrap: `0x9b06F678c4df0eF1282b03FF9FE804444F513d26`
 
 ---
 
 ## ⚙️ Configuration
 
-### Update `drosera.toml`
+### Trap Configuration Explained
+
+The `drosera.toml` file controls how your trap operates:
 
 ```toml
-ethereum_rpc = "https://ethereum-hoodi-rpc.publicnode.com"
-drosera_rpc = "https://relay.hoodi.drosera.io"
-eth_chain_id = 560048
-drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
-
-[traps]
 [traps.whaletransfer]
+# Compiled contract path
 path = "out/WhaleTransferTrap.sol/WhaleTransferTrap.json"
-response_contract = "0xYOUR_RESPONSE_CONTRACT_ADDRESS"
+
+# Where to send alerts
+response_contract = "0xE5701AE464d94449461D224b1f11D5b55be1EC0f"
+
+# Function to call when threshold exceeded
 response_function = "recordAlert(address,address,uint256,uint256)"
+
+# Wait 33 blocks between responses
 cooldown_period_blocks = 33
+
+# Need at least 1 operator
 min_number_of_operators = 1
+
+# Allow maximum 2 operators
 max_number_of_operators = 2
+
+# Check 10 blocks at a time
 block_sample_size = 10
+
+# Only whitelisted operators
 private_trap = true
-whitelist = ["0xYOUR_OPERATOR_WALLET_ADDRESS"]
+whitelist = ["0x929a3B64D53481d8D2332a8778dB4984F5c70bfD"]
 ```
-
-### Configuration Parameters Explained
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `cooldown_period_blocks` | Blocks between responses | 33 |
-| `min_number_of_operators` | Minimum operators required | 1 |
-| `max_number_of_operators` | Maximum operators allowed | 2 |
-| `block_sample_size` | Blocks to sample per check | 10 |
-| `private_trap` | Restrict to whitelisted operators | true |
 
 ---
 
@@ -332,67 +887,48 @@ whitelist = ["0xYOUR_OPERATOR_WALLET_ADDRESS"]
 
 ### Setting Up the Operator
 
-#### 1. Create Operator Environment
+#### Complete Operator Setup Commands
 
 ```bash
+# 1. Create operator directory
 mkdir -p ~/Drosera-Network
 cd ~/Drosera-Network
-```
 
-#### 2. Create `docker-compose.yaml`
+# 2. Create docker-compose.yaml (see Docker Configuration above)
 
-```yaml
-version: '3.8'
+# 3. Create .env file
+cat > .env << 'EOF'
+ETH_PRIVATE_KEY=your_private_key_here
+VPS_IP=213.199.48.116
+EOF
 
-services:
-  drosera-operator:
-    image: ghcr.io/drosera-network/drosera-operator:latest
-    container_name: drosera-operator
-    ports:
-      - "31313:31313"
-      - "31314:31314"
-    environment:
-      - DRO__DB_FILE_PATH=/data/drosera.db
-      - DRO__DROSERA_ADDRESS=0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D
-      - DRO__ETH__CHAIN_ID=560048
-      - DRO__ETH__RPC_URL=https://ethereum-hoodi-rpc.publicnode.com
-      - DRO__ETH__PRIVATE_KEY=${ETH_PRIVATE_KEY}
-      - DRO__NETWORK__EXTERNAL_P2P_ADDRESS=${VPS_IP}
-    volumes:
-      - drosera_data:/data
-    restart: always
-    command: node
+# 4. Configure firewall
+sudo ufw allow ssh
+sudo ufw allow 22
+sudo ufw allow 31313/tcp
+sudo ufw allow 31314/tcp
+sudo ufw enable
 
-volumes:
-  drosera_data:
-```
+# 5. Pull Docker image
+docker pull ghcr.io/drosera-network/drosera-operator:latest
 
-#### 3. Create `.env` file
-
-```bash
-ETH_PRIVATE_KEY=your_private_key
-VPS_IP=your_vps_ip_address
-```
-
-#### 4. Start Operator
-
-```bash
+# 6. Start operator
 docker compose up -d
+
+# 7. View logs
 docker compose logs -f
 ```
 
-#### 5. Register Operator
+#### Register and Opt-in
 
 ```bash
+# Register operator
 drosera-operator register \
   --eth-rpc-url https://ethereum-hoodi-rpc.publicnode.com \
   --eth-private-key your_private_key \
   --drosera-address 0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D
-```
 
-#### 6. Opt-in to Trap
-
-```bash
+# Opt-in to trap
 drosera-operator optin \
   --eth-rpc-url https://ethereum-hoodi-rpc.publicnode.com \
   --eth-private-key your_private_key \
@@ -403,7 +939,7 @@ drosera-operator optin \
 
 ## 🔍 Query API
 
-### Using Cast (Foundry)
+### Complete Query Examples
 
 #### Get Total Alert Count
 
@@ -413,9 +949,9 @@ cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
   --rpc-url https://ethereum-hoodi-rpc.publicnode.com
 ```
 
-**Example Output**: `42` (42 whale alerts recorded)
+**Output**: `42` (number of alerts)
 
-#### Get Specific Alert by Index
+#### Get Specific Alert
 
 ```bash
 cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
@@ -423,9 +959,9 @@ cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
   --rpc-url https://ethereum-hoodi-rpc.publicnode.com
 ```
 
-**Returns**: `(from, to, amount, blockNumber, timestamp)`
+**Output**: Tuple `(from, to, amount, blockNumber, timestamp)`
 
-#### Get Latest N Alerts
+#### Get Latest 5 Alerts
 
 ```bash
 cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
@@ -433,392 +969,9 @@ cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
   --rpc-url https://ethereum-hoodi-rpc.publicnode.com
 ```
 
-**Returns**: Array of the 5 most recent alerts
-
 #### Check Whale Threshold
 
 ```bash
 cast call 0x9b06F678c4df0eF1282b03FF9FE804444F513d26 \
   "getThreshold()(uint256)" \
-  --rpc-url https://ethereum-hoodi-rpc.publicnode.com
-```
-
-**Returns**: `1000000000000000000000` (1000 tokens)
-
-#### Get Alert Count for Specific Address
-
-```bash
-cast call 0xE5701AE464d94449461D224b1f11D5b55be1EC0f \
-  "alertCountByAddress(address)(uint256)" 0xYOUR_WALLET_ADDRESS \
-  --rpc-url https://ethereum-hoodi-rpc.publicnode.com
-```
-
----
-
-## 🎨 Customization
-
-### Change Whale Threshold
-
-**Current**: 1000 tokens  
-**How to modify**:
-
-1. Edit `src/WhaleTransferTrap.sol`:
-
-```solidity
-// Change this line:
-uint256 public constant WHALE_THRESHOLD = 5000 * 10**18; // 5000 tokens
-```
-
-2. Rebuild and redeploy:
-
-```bash
-forge clean
-forge build
-forge script script/Deploy.s.sol:DeployScript \
-  --rpc-url $HOODI_RPC_URL \
-  --private-key $PRIVATE_KEY \
-  --broadcast -vvvv
-```
-
-### Monitor Specific Token
-
-Extend the `collect()` function to filter by ERC20 token address:
-
-```solidity
-function collect() external view returns (bytes memory) {
-    address targetToken = 0xYOUR_TOKEN_ADDRESS;
-    // Add token-specific logic here
-}
-```
-
-### Adjust Cooldown Period
-
-In `drosera.toml`:
-
-```toml
-cooldown_period_blocks = 100  # Increase from 33 to 100 blocks
-```
-
----
-
-## 🧪 Testing
-
-### Run All Tests
-
-```bash
-forge test -vvv
-```
-
-### Run Specific Test
-
-```bash
-forge test --match-test testWhaleThreshold -vvvv
-```
-
-### Coverage Report
-
-```bash
-forge coverage
-```
-
-### Gas Report
-
-```bash
-forge test --gas-report
-```
-
----
-
-## 📊 Monitoring
-
-### View Operator Logs
-
-```bash
-cd ~/Drosera-Network
-docker compose logs -f drosera-operator
-```
-
-**What to look for**:
-- ✅ `INFO Processing block 1345XXX`
-- ✅ `DEBUG Collected data for trap`
-- ❌ `ERROR` messages (troubleshoot if seen)
-
-### Check Operator Status
-
-```bash
-docker ps
-docker compose ps
-```
-
-### Restart Operator
-
-```bash
-docker compose restart drosera-operator
-```
-
-### View on Dashboard
-
-1. Visit: https://app.drosera.io/
-2. Connect wallet
-3. Switch to **Hoodi Network**
-4. Search by trap config address or wallet address
-
----
-
-## 🛠️ Troubleshooting
-
-<details>
-<summary><b>🔴 Operator Not Connecting</b></summary>
-
-**Solution**:
-```bash
-# Check firewall
-sudo ufw status
-sudo ufw allow 31313/tcp
-sudo ufw allow 31314/tcp
-
-# Restart operator
-docker compose restart drosera-operator
-
-# Check logs
-docker compose logs -f
-```
-</details>
-
-<details>
-<summary><b>🔴 Registration Failed</b></summary>
-
-**Solution**:
-```bash
-# Try manual operator version
-cd ~
-curl -LO https://github.com/drosera-network/releases/releases/download/v1.20.0/drosera-operator-v1.20.0-x86_64-unknown-linux-gnu.tar.gz
-tar -xvf drosera-operator-v1.20.0-x86_64-unknown-linux-gnu.tar.gz
-sudo cp drosera-operator /usr/bin
-
-# Then register
-drosera-operator register --eth-rpc-url https://ethereum-hoodi-rpc.publicnode.com --eth-private-key YOUR_KEY --drosera-address 0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D
-```
-</details>
-
-<details>
-<summary><b>🔴 Build Errors</b></summary>
-
-**Solution**:
-```bash
-# Clean and reinstall
-forge clean
-rm -rf lib/
-forge install foundry-rs/forge-std --no-commit
-forge build
-```
-</details>
-
-<details>
-<summary><b>🔴 Docker Issues</b></summary>
-
-**Solution**:
-```bash
-# Remove all containers
-docker compose down -v
-
-# Pull fresh image
-docker pull ghcr.io/drosera-network/drosera-operator:latest
-
-# Restart
-docker compose up -d
-```
-</details>
-
----
-
-## 📖 Resources
-
-### Documentation
-- 📘 [Drosera Official Docs](https://dev.drosera.io/)
-- 📗 [Foundry Book](https://book.getfoundry.sh/)
-- 📙 [Hoodi Testnet Guide](https://github.com/eth-clients/hoodi)
-- 📕 [Solidity Documentation](https://docs.soliditylang.org/)
-
-### Community
-- 💬 [Drosera Discord](https://discord.com/invite/drosera)
-- 🐦 [Drosera Twitter](https://twitter.com/droseranetwork)
-- 📺 [Video Tutorials](https://www.youtube.com/@droseranetwork)
-
-### Tools
-- 🔧 [Hoodi RPC](https://ethereum-hoodi-rpc.publicnode.com)
-- 🔍 [Hoodi Explorer](https://explorer.hoodi.io/)
-- 🎨 [Drosera Dashboard](https://app.drosera.io/)
-
-### Faucets
-- 💧 [Hoodi Testnet Faucet](https://github.com/eth-clients/hoodi#faucet)
-
----
-
-## 🤝 Contributing
-
-We welcome contributions from the community! Here's how you can help:
-
-### Ways to Contribute
-
-- 🐛 **Report Bugs**: Open an issue with detailed information
-- 💡 **Suggest Features**: Share your ideas for improvements
-- 📝 **Improve Documentation**: Help make docs clearer
-- 🔧 **Submit Pull Requests**: Fix bugs or add features
-
-### Contribution Process
-
-1. **Fork** the repository
-2. **Create** your feature branch
-   ```bash
-   git checkout -b feature/AmazingFeature
-   ```
-3. **Commit** your changes
-   ```bash
-   git commit -m 'Add: Amazing new feature'
-   ```
-4. **Push** to the branch
-   ```bash
-   git push origin feature/AmazingFeature
-   ```
-5. **Open** a Pull Request
-
-### Code Style
-
-- Follow Solidity style guide
-- Add comments for complex logic
-- Include tests for new features
-- Update documentation
-
----
-
-## 🔐 Security
-
-### Best Practices
-
-- ❌ **Never** commit `.env` files
-- ❌ **Never** share private keys
-- ✅ **Always** use environment variables
-- ✅ **Always** audit contracts before mainnet
-- ✅ **Always** test thoroughly on testnet
-
-### Report Security Issues
-
-Found a vulnerability? Please email: `security@yourdomain.com`
-
-**Do NOT** open public issues for security vulnerabilities.
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-```
-MIT License
-
-Copyright (c) 2025 Whale Transaction Alert Trap
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
-
----
-
-## 🙏 Acknowledgments
-
-<div align="center">
-
-**Built with amazing tools and supported by great communities**
-
-[![Drosera](https://img.shields.io/badge/Built%20on-Drosera-blue?style=flat-square)](https://drosera.io/)
-[![Foundry](https://img.shields.io/badge/Powered%20by-Foundry-red?style=flat-square)](https://getfoundry.sh/)
-[![Hoodi](https://img.shields.io/badge/Deployed%20on-Hoodi-orange?style=flat-square)](https://github.com/eth-clients/hoodi)
-
-</div>
-
-Special thanks to:
-- 🏗️ **Drosera Network** - For the amazing infrastructure
-- ⚒️ **Foundry Team** - For the best Solidity toolkit
-- 🌐 **Ethereum Foundation** - For Hoodi testnet
-- 👥 **Open Source Community** - For continuous support
-
----
-
-## 📊 Project Stats
-
-<div align="center">
-
-![GitHub Stars](https://img.shields.io/github/stars/Miningelectroneum/Whale-Tx-Trap?style=social)
-![GitHub Forks](https://img.shields.io/github/forks/Miningelectroneum/Whale-Tx-Trap?style=social)
-![GitHub Issues](https://img.shields.io/github/issues/Miningelectroneum/Whale-Tx-Trap)
-![GitHub Pull Requests](https://img.shields.io/github/issues-pr/Miningelectroneum/Whale-Tx-Trap)
-
-</div>
-
----
-
-## 🎯 Roadmap
-
-### Phase 1: Foundation ✅
-- [x] Core trap implementation
-- [x] Response contract with storage
-- [x] Basic query functions
-- [x] Hoodi testnet deployment
-
-### Phase 2: Enhancement 🚧
-- [ ] Multi-token support
-- [ ] Advanced filtering options
-- [ ] Historical data analytics
-- [ ] Web dashboard
-
-### Phase 3: Production 📅
-- [ ] Mainnet deployment
-- [ ] Gas optimization
-- [ ] Security audit
-- [ ] Advanced monitoring tools
-
----
-
-## 📞 Contact & Support
-
-<div align="center">
-
-**Need help? Reach out!**
-
-[![GitHub](https://img.shields.io/badge/GitHub-Miningelectroneum-black?style=for-the-badge&logo=github)](https://github.com/Miningelectroneum)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289DA?style=for-the-badge&logo=discord)](https://discord.com/invite/drosera)
-[![Twitter](https://img.shields.io/badge/Twitter-Follow-1DA1F2?style=for-the-badge&logo=twitter)](https://twitter.com/yourusername)
-
-</div>
-
----
-
-## 🎉 Status
-
-<div align="center">
-
-### 🟢 **ACTIVE & MONITORING**
-
-**Last Updated**: October 2025  
-**Version**: 1.0.0  
-**Status**: Production Ready on Hoodi Testnet
-
-</div>
-
----
-
-<div align="center">
-
-**Made with ❤️ by the Whale Trap Team**
-
-⭐ **Star this repo if you find it useful!** ⭐
-
-</div>
+  --r
