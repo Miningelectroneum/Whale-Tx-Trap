@@ -1531,15 +1531,6 @@ We'll respond within 48 hours and work with you to resolve the issue.
 - 👥 **[Open Source Community](https://github.com/)** - For continuous inspiration and support
 - 💻 **All Contributors** - Everyone who helped improve this project
 
-### Inspiration
-
-This project was inspired by:
-- Real-world whale tracking needs
-- DeFi security monitoring
-- Blockchain transparency initiatives
-- Community-driven development
-
----
 
 ## 📊 Project Statistics
 
@@ -1639,18 +1630,7 @@ This project was inspired by:
 
 </div>
 
----
 
-<div align="center">
-
-## 💎 Featured On
-
-This project has been featured on:
-- Drosera Community Showcase
-- Hoodi Testnet Examples
-- DeFi Security Tools
-
-</div>
 
 ---
 
