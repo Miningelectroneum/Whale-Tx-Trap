@@ -1488,8 +1488,7 @@ function testWhaleTransferDetection() public {
 Found a security issue? **Please report responsibly:**
 
 1. **DO NOT** open a public issue
-2. Email: `security@miningelectroneum.com` (replace with your email)
-3. Include:
+2. Include:
    - Description of vulnerability
    - Steps to reproduce
    - Potential impact
@@ -1510,24 +1509,6 @@ We'll respond within 48 hours and work with you to resolve the issue.
 - [ ] Emergency stop mechanism (if needed)
 - [ ] Tested on testnet first
 
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.
-
-### MIT License Summary
-
-- ✅ Commercial use allowed
-- ✅ Modification allowed
-- ✅ Distribution allowed
-- ✅ Private use allowed
-- ⚠️ Liability limited
-- ⚠️ Warranty not provided
-
-See [LICENSE](LICENSE) file for full text.
-
----
 
 ## 🙏 Acknowledgments
 
@@ -1574,45 +1555,6 @@ This project was inspired by:
 
 ---
 
-## 🎯 Roadmap
-
-### Phase 1: Foundation ✅ COMPLETE
-
-- [x] Core trap implementation
-- [x] Response contract with storage
-- [x] Basic query functions
-- [x] Deployment scripts
-- [x] Hoodi testnet deployment
-- [x] Documentation
-- [x] Docker setup
-
-### Phase 2: Enhancement 🚧 IN PROGRESS
-
-- [ ] Multi-token support (ERC20, ERC721, ERC1155)
-- [ ] Advanced filtering options
-- [ ] Historical data analytics dashboard
-- [ ] GraphQL API for queries
-- [ ] Webhook notifications
-- [ ] Email/Telegram alerts
-- [ ] Mobile app integration
-
-### Phase 3: Advanced Features 📅 PLANNED
-
-- [ ] Machine learning whale pattern detection
-- [ ] Cross-chain monitoring
-- [ ] DeFi protocol integration
-- [ ] Real-time price impact analysis
-- [ ] Whale wallet profiling
-- [ ] Market sentiment correlation
-
-### Phase 4: Production 🎯 FUTURE
-
-- [ ] Mainnet deployment (after audit)
-- [ ] Gas optimization phase 2
-- [ ] Professional security audit
-- [ ] DAO governance
-- [ ] Token economics
-- [ ] Enterprise features
 
 ---
 
